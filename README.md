@@ -1,7 +1,7 @@
 # VimDojo
 
-VimDojo is a hands-on Vim tutorial inspired by [vimhero](https://www.vim-hero.com/). Learn by doing and build real muscle memory. This tool is free and will always be free.
+VimDojo is a hands-on Vim tutorial inspired by [vimhero](https://www.vim-hero.com/). Learn Vim by doing — build real muscle memory through interactive exercises. This tool is free and always will be.
 
-# PRs
+## Contributing
 
-Feel free to open PRs, even AI slop. This project was created with AI as the many example I found online cost money (lame). I have limited resources to review PRs so there will be limited testing. Just know if you open bad PR and I merge it and the app breaks, you will make other people sad.
+Pull requests are welcome, including AI-assisted ones. This project was itself built with the help of AI after I found that most similar tools online are paywalled. I have limited bandwidth to review PRs, so testing may be light. Just know that if a bad PR gets merged and breaks something, real people will become sad — so please do your best to test before submitting.
