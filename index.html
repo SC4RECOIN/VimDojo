@@ -380,7 +380,7 @@ const LESSONS = [
     challenges: [
       { goal:'Use "cc" to replace line 2 entirely with "  return b + a;".', start:['function swap(a, b) {','  return a + b;','}'], goalText:['function swap(a, b) {','  return b + a;','}'], par:18 },
       { goal:'Use "cw" to change "var" to "const" on line 1 (navigate to v in var, cw, type const, Esc).', start:['var name = "vim";','console.log(name);'], goalText:['const name = "vim";','console.log(name);'], par:9 },
-      { goal:'Use "s" to replace the "X" with "o" on line 1 (navigate to X, press s, type o, Esc).', start:['fx bar baz'], goalText:['foo bar baz'], par:5 },
+      { goal:'Use "s" to replace the "x" with "oo" on line 1 (navigate to x, press s, type oo, Esc).', start:['fx bar baz'], goalText:['foo bar baz'], par:6 },
     ]
   },
 
@@ -418,7 +418,7 @@ const LESSONS = [
     commands: [{key:'f{c}',desc:'Find char forward'},{key:'t{c}',desc:'Till char forward'},{key:'F{c}',desc:'Find char backward'},{key:';',desc:'Repeat f/t'},{key:',',desc:'Reverse f/t'}],
     challenges: [
       { goal:'Use "f," to jump to the first comma, then "x" to delete it. Use ";" to find the next comma and "x" again.', start:['one, two, three'], goalText:['one two three'], par:6 },
-      { goal:'Use "dt)" to delete from cursor to just before ")". Position cursor on "extra, " first.', start:['call(extra, done)'], goalText:['call(done)'], par:6 },
+      { goal:'Use "dt)" to delete from cursor to just before ")". Position cursor on "extra" first.', start:['call(extra)'], goalText:['call()'], par:5 },
       { goal:'Use "ct:" to change everything before the colon to "name" (navigate to start of "key", then ct:, type name, Esc).', start:['  key: value'], goalText:['  name: value'], par:7 },
     ]
   },
@@ -577,6 +577,20 @@ class VimEngine {
 
   // ── NORMAL MODE ──
   _normalKey(key, e) {
+    // Handle f/F/t/T pending (must be first to prevent key being executed as command or count)
+    if(this.pendingKey==='f'||this.pendingKey==='F'||this.pendingKey==='t'||this.pendingKey==='T') {
+      if(key==='Escape') { this.pendingKey=''; this._notify(); return; }
+      if(key.length===1 && key!=='Shift') {
+        const dir = (this.pendingKey==='f'||this.pendingKey==='t')?1:-1;
+        const till = (this.pendingKey==='t'||this.pendingKey==='T');
+        this.lastFindChar=key; this.lastFindDir=dir; this.lastFindTill=till;
+        this._doFind(key,dir,till);
+        this._addKey(this.pendingKey+key);
+      }
+      this.pendingKey='';
+      this.clampCursor();
+      this._notify(); return;
+    }
     // Count prefix accumulation (works before and during pending operator)
     if((key>='1'&&key<='9')||(key==='0'&&this.countPrefix>0)){
       this.countPrefix=this.countPrefix*10+parseInt(key);
@@ -589,6 +603,7 @@ class VimEngine {
       // doubled operator (dd, cc, yy, >>, <<, gUU, guu)
       if(key===op || (op==='>' && key==='>') || (op==='<' && key==='<')) {
         this._execOperatorLine(op, count);
+        if(op==='>'||op==='<')this.lastChange={type:'indent',op,count};
         this.pendingOp=''; this.pendingKey=''; this._addKey(op+key); this._notify(); return;
       }
       // gU, gu pending second part
@@ -788,20 +803,6 @@ class VimEngine {
       case '*': this._searchWordUnderCursor();this._addKey('*');break;
       case '.': this._repeatLastChange();this._addKey('.');break;
     }
-    // Handle f/F/t/T pending
-    if(this.pendingKey==='f'||this.pendingKey==='F'||this.pendingKey==='t'||this.pendingKey==='T') {
-      if(key!==this.pendingKey) {
-        if(key.length===1 && key!=='Escape' && key!=='Shift') {
-          const dir = (this.pendingKey==='f'||this.pendingKey==='t')?1:-1;
-          const till = (this.pendingKey==='t'||this.pendingKey==='T');
-          this.lastFindChar=key; this.lastFindDir=dir; this.lastFindTill=till;
-          this._doFind(key,dir,till);
-          this._addKey(this.pendingKey+key);
-        }
-        this.pendingKey='';
-      }
-      this._notify(); return;
-    }
     this.clampCursor();
     this._notify();
   }
@@ -849,8 +850,8 @@ class VimEngine {
       }
       if(this.lines.length===0) this.lines=[''];
       this.cursor={...start};
-      this.clampCursor();
       if(op==='c'){this.insertRecord={cmd:'c_motion',text:''};this.mode='insert';if(this.onModeChange)this.onModeChange('insert')}
+      this.clampCursor();
     } else if(op==='y') {
       if(start.row===end.row) {
         this.register=this.lines[start.row].slice(start.col,end.col);this.registerIsLine=false;
@@ -931,8 +932,8 @@ class VimEngine {
       }
       if(this.lines.length===0)this.lines=[''];
       this.cursor={row:start.row,col:start.col};
-      this.clampCursor();
       if(op==='c'){this.insertRecord={cmd:'c_motion',text:''};this.mode='insert';if(this.onModeChange)this.onModeChange('insert')}
+      this.clampCursor();
     } else if(op==='y') {
       if(start.row===end.row) this.register=this.lines[start.row].slice(start.col,end.col);
       this.registerIsLine=false;
@@ -960,12 +961,20 @@ class VimEngine {
   _getTextObject(key, inner) {
     const row=this.cursor.row, col=this.cursor.col;
     const line=this.lines[row];
-    // Word
+    // Word (uses word class boundaries: keyword vs punctuation)
     if(key==='w') {
+      const cls=this._charClass(line[col]);
+      if(cls===0) {
+        // On whitespace: select the whitespace run
+        let s=col, e=col;
+        while(s>0 && this._charClass(line[s-1])===0) s--;
+        while(e<line.length-1 && this._charClass(line[e+1])===0) e++;
+        return {start:{row,col:s},end:{row,col:e+1}};
+      }
       let s=col, e=col;
-      while(s>0 && !/\s/.test(line[s-1])) s--;
-      while(e<line.length-1 && !/\s/.test(line[e+1])) e++;
-      if(!inner) { while(e<line.length-1 && /\s/.test(line[e+1])) e++; }
+      while(s>0 && this._charClass(line[s-1])===cls) s--;
+      while(e<line.length-1 && this._charClass(line[e+1])===cls) e++;
+      if(!inner) { while(e<line.length-1 && this._charClass(line[e+1])===0) e++; }
       return {start:{row,col:s},end:{row,col:e+1}};
     }
     // Paired delimiters
@@ -1205,6 +1214,8 @@ class VimEngine {
           case 'C':this.lines[this.cursor.row]=this.lines[this.cursor.row].slice(0,this.cursor.col);break;
           case 'cc':this.lines[this.cursor.row]='';this.cursor.col=0;break;
           case 'c_motion': {
+            // Set mode to insert before delete so clampCursor uses insert bounds
+            this.mode='insert';
             if(lc.textObj){
               const obj=this._getTextObject(lc.textObj,lc.inner);
               if(obj)this._execOperatorRange('d',obj.start,obj.end);
@@ -1222,11 +1233,45 @@ class VimEngine {
           }
         }
         if(lc.text){
-          const ln=this.lines[this.cursor.row];
-          this.lines[this.cursor.row]=ln.slice(0,this.cursor.col)+lc.text+ln.slice(this.cursor.col);
-          this.cursor.col+=lc.text.length-1;
+          for(const ch of lc.text){
+            if(ch==='\n'){
+              const ln=this.lines[this.cursor.row];
+              this.lines[this.cursor.row]=ln.slice(0,this.cursor.col);
+              this.lines.splice(this.cursor.row+1,0,ln.slice(this.cursor.col));
+              this.cursor.row++;this.cursor.col=0;
+            } else if(ch==='\b'){
+              if(this.cursor.col>0){
+                const ln=this.lines[this.cursor.row];
+                this.lines[this.cursor.row]=ln.slice(0,this.cursor.col-1)+ln.slice(this.cursor.col);
+                this.cursor.col--;
+              } else if(this.cursor.row>0){
+                const prev=this.lines[this.cursor.row-1];
+                this.cursor.col=prev.length;
+                this.lines[this.cursor.row-1]=prev+this.lines[this.cursor.row];
+                this.lines.splice(this.cursor.row,1);
+                this.cursor.row--;
+              }
+            } else {
+              const ln=this.lines[this.cursor.row];
+              this.lines[this.cursor.row]=ln.slice(0,this.cursor.col)+ch+ln.slice(this.cursor.col);
+              this.cursor.col++;
+            }
+          }
+          this.cursor.col=Math.max(0,this.cursor.col-1);
         }
+        this.mode='normal';
         this.clampCursor();break;
+      }
+      case 'indent': {
+        this.saveUndo();
+        const n=lc.count||1;
+        const r=this.cursor.row;
+        const endR=Math.min(r+n-1,this.lines.length-1);
+        for(let i=r;i<=endR;i++){
+          if(lc.op==='>') this.lines[i]='  '+this.lines[i];
+          else this.lines[i]=this.lines[i].replace(/^ {1,2}/,'');
+        }
+        break;
       }
     }
   }
@@ -1244,6 +1289,7 @@ class VimEngine {
       this.lines[this.cursor.row]=ln.slice(0,this.cursor.col);
       this.lines.splice(this.cursor.row+1,0,ln.slice(this.cursor.col));
       this.cursor.row++;this.cursor.col=0;
+      if(this.insertRecord)this.insertRecord.text+='\n';
       this._addKey('CR');this._notify();return;
     }
     if(key==='Backspace'){
@@ -1260,6 +1306,7 @@ class VimEngine {
         this.lines.splice(this.cursor.row,1);
         this.cursor.row--;
       }
+      if(this.insertRecord)this.insertRecord.text+='\b';
       this._addKey('BS');this._notify();return;
     }
     if(key==='Tab'){
@@ -1309,13 +1356,14 @@ class VimEngine {
         this._addKey('y');if(this.onModeChange)this.onModeChange('normal');break;
       case 'c':
         this.saveUndo();
+        this.mode='insert';
         if(this.visualLineMode) {
           this._deleteVisualLines();
           this.lines.splice(this.cursor.row,0,'');
         } else {
           this._deleteVisualChars();
         }
-        this.mode='insert';this.visualStart=null;this.visualLineMode=false;
+        this.visualStart=null;this.visualLineMode=false;
         this._addKey('c');if(this.onModeChange)this.onModeChange('insert');break;
       case '>':
         this.saveUndo();
@@ -1419,12 +1467,17 @@ class VimEngine {
   }
 
   // ── MOVEMENT HELPERS ──
+  // Vim word class: 0=whitespace, 1=keyword (alnum/_), 2=punctuation (other non-blank)
+  _charClass(ch) { if(/\s/.test(ch))return 0; if(/\w/.test(ch))return 1; return 2; }
   _moveWord(dir) {
     const line=this.lines[this.cursor.row];
     if(dir>0){
       let c=this.cursor.col;
-      while(c<line.length&&!/\s/.test(line[c]))c++;
-      while(c<line.length&&/\s/.test(line[c]))c++;
+      const cls=line.length>0?this._charClass(line[c]):0;
+      // Skip current word class
+      if(cls>0){ while(c<line.length&&this._charClass(line[c])===cls)c++; }
+      // Skip whitespace
+      while(c<line.length&&this._charClass(line[c])===0)c++;
       if(c>=line.length&&this.cursor.row<this.lines.length-1){
         this.cursor.row++;
         const nl=this.lines[this.cursor.row];let nc=0;
@@ -1434,8 +1487,12 @@ class VimEngine {
     } else {
       let c=this.cursor.col;
       if(c===0&&this.cursor.row>0){this.cursor.row--;this.cursor.col=Math.max(0,this.lines[this.cursor.row].length-1);return}
-      c--;while(c>0&&/\s/.test(line[c]))c--;
-      while(c>0&&!/\s/.test(line[c-1]))c--;
+      c--;
+      // Skip whitespace backward
+      while(c>0&&this._charClass(line[c])===0)c--;
+      // Skip same word class backward
+      const cls=c>=0?this._charClass(line[c]):0;
+      while(c>0&&this._charClass(line[c-1])===cls)c--;
       this.cursor.col=Math.max(0,c);
     }
   }
@@ -1462,11 +1519,22 @@ class VimEngine {
   _moveWordEnd() {
     const line=this.lines[this.cursor.row];
     let c=this.cursor.col+1;
+    // Skip whitespace
+    while(c<line.length&&this._charClass(line[c])===0)c++;
+    // Skip same word class
+    if(c<line.length){
+      const cls=this._charClass(line[c]);
+      while(c<line.length-1&&this._charClass(line[c+1])===cls)c++;
+    }
+    this.cursor.col=Math.min(c,Math.max(0,line.length-1));
+  }
+  _moveWORDEnd() {
+    const line=this.lines[this.cursor.row];
+    let c=this.cursor.col+1;
     while(c<line.length&&/\s/.test(line[c]))c++;
     while(c<line.length-1&&!/\s/.test(line[c+1]))c++;
     this.cursor.col=Math.min(c,Math.max(0,line.length-1));
   }
-  _moveWORDEnd() { this._moveWordEnd(); } // simplified
   _moveFirstNonBlank() {
     const line=this.lines[this.cursor.row];
     let c=0;while(c<line.length&&/\s/.test(line[c]))c++;
