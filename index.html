@@ -1669,8 +1669,9 @@ class VimEngine {
 class VimDojo {
   constructor() {
     this.vim = new VimEngine();
-    this.currentLesson = 0;
-    this.currentChallenge = 0;
+    const savedPos = JSON.parse(localStorage.getItem('vd_pos')||'{}');
+    this.currentLesson = savedPos.l||0;
+    this.currentChallenge = savedPos.c||0;
     this.completed = new Set(JSON.parse(localStorage.getItem('vd_done')||'[]'));
     this.totalChallenges = LESSONS.reduce((s,l)=>s+l.challenges.length,0);
 
@@ -1679,7 +1680,7 @@ class VimDojo {
     this.vim.onSearch = (a,q)=>this.updateSearch(a,q);
 
     this.buildSidebar();
-    this.loadLesson(0,0);
+    this.loadLesson(this.currentLesson,this.currentChallenge);
     this.bindEvents();
     this.updateProgress();
   }
@@ -1706,6 +1707,7 @@ class VimDojo {
   loadLesson(li, ci) {
     this.currentLesson=li;
     this.currentChallenge=ci;
+    localStorage.setItem('vd_pos',JSON.stringify({l:li,c:ci}));
     const lesson=LESSONS[li];
     const ch=lesson.challenges[ci];
     this.vim.loadText(ch.start.map(l=>l));
